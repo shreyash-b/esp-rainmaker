@@ -12,6 +12,6 @@ typedef struct {
     char *fw_version;
     char *ota_job_id;
     int filesize;
-    esp_timer_handle_t autofetch_timer
+    esp_timer_handle_t autofetch_timer;
     esp_timer_handle_t rollback_timer;
 } esp_rmaker_ota_https_t;
