@@ -635,20 +635,26 @@ static esp_err_t esp_rmaker_erase_rollback_flag(void)
     return ESP_OK;
 }
 
-static void esp_rmaker_ota_manage_rollback(esp_rmaker_ota_t *ota)
-{
-    /* If rollback is enabled, and the ota update flag is found, it means that the OTA validation is pending
-    */
+bool esp_rmaker_ota_is_ota_validation_pending(void) {
     nvs_handle handle;
     esp_err_t err = nvs_open_from_partition(ESP_RMAKER_NVS_PART_NAME, RMAKER_OTA_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
         uint8_t ota_update = 0;
         size_t len = sizeof(ota_update);
+
+        /* If rollback is enabled, and the ota update flag is found, it means that the OTA validation is pending */
         if ((err = nvs_get_blob(handle, RMAKER_OTA_UPDATE_FLAG_NVS_NAME, &ota_update, &len)) == ESP_OK) {
-            ota->validation_in_progress = true;
+            return true;
         }
         nvs_close(handle);
     }
+    
+    return false;
+}
+
+static void esp_rmaker_ota_manage_rollback(esp_rmaker_ota_t *ota)
+{
+    ota->validation_in_progress = esp_rmaker_ota_is_ota_validation_pending();
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t ota_state;
     if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {

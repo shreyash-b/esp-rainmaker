@@ -239,6 +239,14 @@ esp_err_t esp_rmaker_ota_report_status(esp_rmaker_ota_handle_t ota_handle, ota_s
  * */
 esp_err_t esp_rmaker_ota_default_cb(esp_rmaker_ota_handle_t handle, esp_rmaker_ota_data_t *ota_data);
 
+/** Returns whether OTA validation is pending.
+ * Returns true if firmware validation is pending after an OTA.
+ * This can be reset using esp_rmaker_ota_erase_rollback_flag()
+ * 
+ * @return true if validation is pending, false otherwises
+ */
+bool esp_rmaker_ota_is_ota_validation_pending(void);
+
 /** Fetch OTA Info
  *
  * For OTA using Topics, this API can be used to explicitly ask the backend if an OTA is available.
