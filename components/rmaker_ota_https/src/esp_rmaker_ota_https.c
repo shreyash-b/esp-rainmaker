@@ -9,7 +9,6 @@
 #include <esp_netif_types.h>
 #include <esp_http_client.h>
 #include <esp_rmaker_utils.h>
-#include <esp_rmaker_work_queue.h>
 #include <esp_rmaker_ota.h>
 #include <esp_ota_ops.h>
 #include "esp_rmaker_client_data.h"
@@ -343,6 +342,7 @@ static void esp_rmaker_ota_https_register_timer(esp_rmaker_ota_https_t *ota)
         return;
     }
 
+    ESP_LOGI(TAG, "Creating OTA HTPPS autofetch timer.");
     esp_timer_create_args_t timer_config = {
         .name = "ota_https_autofetch",
         .callback = esp_rmaker_ota_https_autofetch_cb,
@@ -352,9 +352,8 @@ static void esp_rmaker_ota_https_register_timer(esp_rmaker_ota_https_t *ota)
     
     if(esp_timer_create(&timer_config, &ota->autofetch_timer) == ESP_OK){
         esp_timer_start_periodic(ota->autofetch_timer, ota_autofetch_period);
-        esp_rmaker_work_queue_add_task(esp_rmaker_ota_https_autofetch_cb, NULL); // Fetch OTA update immediately when enabled
     } else {
-        ESP_LOGE(TAG, "Failed to enable autofetch.");
+        ESP_LOGE(TAG, "Failed to create autofetch timer.");
     }
 }
 #endif
