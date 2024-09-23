@@ -12,8 +12,14 @@
 #include <esp_log.h>
 #include <esp_rmaker_factory.h>
 #include <esp_rmaker_ota_https.h>
+#include <app_reset.h>
 
 static const char *TAG = "app_mmain";
+
+#define BUTTON_GPIO          CONFIG_EXAMPLE_BOARD_BUTTON_GPIO
+#define BUTTON_ACTIVE_LEVEL  0
+
+#define WIFI_RESET_BUTTON_TIMEOUT       3
 
 void app_main()
 {
@@ -36,6 +42,11 @@ void app_main()
     }
     ESP_ERROR_CHECK(err);
     
+    button_handle_t btn_handle = iot_button_create(BUTTON_GPIO, BUTTON_ACTIVE_LEVEL);
+    if (btn_handle) {
+        /* Register Wi-Fi reset functionality */
+        app_reset_button_register(btn_handle, WIFI_RESET_BUTTON_TIMEOUT, 0);
+    }
 
     app_network_init();
     app_network_start(POP_TYPE_RANDOM);
