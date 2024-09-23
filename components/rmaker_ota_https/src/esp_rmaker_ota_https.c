@@ -76,18 +76,19 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
 
     esp_http_client_set_header(client, "Content-Type", "application/json");
 
-    esp_err_t err = ESP_OK;
-    if ((err = esp_http_client_open(client, 0)) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open HTTP Connection.");
+    esp_http_client_set_post_field(client, publish_payload, strlen(publish_payload));
+    esp_err_t err = esp_http_client_perform(client);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to perform HTTP request.");
+        err = ESP_FAIL;
         goto end;
     }
 
-    esp_http_client_write(client, publish_payload, 200);
-
     int response_status_code = esp_http_client_get_status_code(client);
-    if (response_status_code != 0)
+    if (response_status_code != 200)
     {
         ESP_LOGE(TAG, "Failed to report status: %d", response_status_code);
+        ESP_LOGE(TAG, "writing to server: %s, payload: %s", ota_report_url, publish_payload);
         err = ESP_FAIL;
     }
 
