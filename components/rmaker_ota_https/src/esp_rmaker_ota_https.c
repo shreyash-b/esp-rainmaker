@@ -9,6 +9,7 @@
 #include <esp_netif_types.h>
 #include <esp_http_client.h>
 #include <esp_rmaker_utils.h>
+#include <esp_rmaker_work_queue.h>
 #include <esp_rmaker_ota.h>
 #include <esp_ota_ops.h>
 #include "esp_rmaker_client_data.h"
@@ -32,6 +33,7 @@ static const esp_rmaker_ota_config_t ota_default_config = {
 
 esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, char *additional_info)
 {
+    status = OTA_STATUS_IN_PROGRESS;
     if (!ota_job_id){
         ESP_LOGE(TAG, "Failed to report: ota_job_id not present");
         return ESP_ERR_INVALID_ARG;
@@ -210,6 +212,7 @@ static esp_err_t handle_fetched_data(char* json_payload)
         esp_rmaker_ota_data_t ota_data;
         ota_data.url = ota->ota_url;
         ota_data.fw_version = ota->fw_version;
+        ota_data.metadata = NULL;
         ota_data.ota_job_id = ota->ota_job_id;
         ota_data.filesize = ota->filesize;
         ota_data.report_fn = esp_rmaker_ota_https_report;
@@ -243,8 +246,9 @@ end:
     return err;
 }
 
-esp_err_t esp_rmaker_ota_https_fetch(esp_rmaker_ota_https_t *ota)
+esp_err_t esp_rmaker_ota_https_fetch(void)
 {
+    esp_rmaker_ota_https_t *ota = g_ota_https_data;
     if (!ota){
         return ESP_ERR_INVALID_STATE;
     }
@@ -324,11 +328,9 @@ ret:
     return err;
 }
 
-
 void esp_rmaker_ota_https_autofetch_cb(void *priv_data)
 {
-    esp_rmaker_ota_https_t *ota = (esp_rmaker_ota_https_t *)priv_data;
-    if(esp_rmaker_ota_https_fetch(ota) != ESP_OK){
+    if(esp_rmaker_ota_https_fetch() != ESP_OK){
         ESP_LOGE(TAG, "Failed to fetch OTA update");
     };
 }
@@ -343,14 +345,13 @@ static void esp_rmaker_ota_https_register_timer(esp_rmaker_ota_https_t *ota)
     esp_timer_create_args_t timer_config = {
         .name = "ota_https_autofetch",
         .callback = esp_rmaker_ota_https_autofetch_cb,
-        .arg = (void *)ota,
+        .arg = NULL,
         .dispatch_method = ESP_TIMER_TASK,
     };
     
-    esp_err_t err;
-    if((err = esp_timer_create(&timer_config, &ota->autofetch_timer)) == ESP_OK){
+    if(esp_timer_create(&timer_config, &ota->autofetch_timer) == ESP_OK){
         esp_timer_start_periodic(ota->autofetch_timer, ota_autofetch_period);
-        rmaker_work_queue_add(esp_rmaker_ota_https_fetch, ota); // Fetch OTA update immediately when enabled
+        esp_rmaker_work_queue_add_task(esp_rmaker_ota_https_autofetch_cb, NULL); // Fetch OTA update immediately when enabled
     } else {
         ESP_LOGE(TAG, "Failed to enable autofetch.");
     }
@@ -453,8 +454,7 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
     } 
     if (validation_pending) {
         esp_rmaker_ota_erase_rollback_flag();
-        esp_rmaker_ota_report_status((esp_rmaker_ota_handle_t )ota,
-                OTA_STATUS_REJECTED, "Firmware rolled back");
+        esp_rmaker_ota_report_status(NULL, OTA_STATUS_REJECTED, "Firmware rolled back");
     }
 }
 

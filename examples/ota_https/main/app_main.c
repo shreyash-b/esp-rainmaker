@@ -12,6 +12,7 @@
 #include <esp_log.h>
 #include <esp_rmaker_factory.h>
 #include <esp_rmaker_ota_https.h>
+#include <esp_rmaker_work_queue.h>
 
 static const char *TAG = "app_mmain";
 
@@ -35,10 +36,11 @@ void app_main()
         ESP_LOGE(TAG, "Failed to initialize rmaker factory partition.");
     }
     ESP_ERROR_CHECK(err);
+    ESP_ERROR_CHECK(esp_rmaker_work_queue_init());
     
     esp_rmaker_ota_https_enable(NULL);
 
     app_network_init();
     app_network_start(POP_TYPE_RANDOM);
-
+    esp_rmaker_work_queue_start();
 }
