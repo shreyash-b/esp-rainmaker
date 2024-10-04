@@ -10,6 +10,7 @@
 #define NODE_API_FIELD_ERROR_CODE "error_code"
 #define NODE_API_FIELD_DESCRIPTION "description"
 #define NODE_API_FIELD_URL "url"
+#define NODE_API_FIELD_METADATA "metadata"
 #define NODE_API_FIELD_FW_VERSION "fw_version"
 #define NODE_API_FIELD_JOB_ID "ota_job_id"
 #define NODE_API_FIELD_FILE_SIZE "file_size"

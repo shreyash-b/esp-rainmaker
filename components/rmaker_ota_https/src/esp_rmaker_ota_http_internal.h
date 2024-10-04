@@ -11,7 +11,12 @@ typedef struct {
     char *ota_url;
     char *fw_version;
     char *ota_job_id;
+    char *metadata;
     int filesize;
     esp_timer_handle_t autofetch_timer;
     esp_timer_handle_t rollback_timer;
 } esp_rmaker_ota_https_t;
+
+#define OTA_HTTPS_NVS_PART_NAME     "nvs"
+#define OTA_HTTPS_NVS_NAMESPACE    "rmaker_ota"
+#define OTA_HTTPS_JOB_ID_NVS_NAME  "rmaker_ota_id"

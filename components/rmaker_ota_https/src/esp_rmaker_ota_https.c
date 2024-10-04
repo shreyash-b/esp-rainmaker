@@ -11,6 +11,7 @@
 #include <esp_rmaker_utils.h>
 #include <esp_rmaker_ota.h>
 #include <esp_ota_ops.h>
+#include <esp_rmaker_factory.h>
 #include "esp_rmaker_client_data.h"
 #include "esp_rmaker_ota_https.h"
 #include "esp_rmaker_ota_http_internal.h"
@@ -32,10 +33,6 @@ static const esp_rmaker_ota_config_t ota_default_config = {
 
 esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, char *additional_info)
 {
-    if (!ota_job_id){
-        ESP_LOGE(TAG, "Failed to report: ota_job_id not present");
-        return ESP_ERR_INVALID_ARG;
-    }
 
     /* Actual url will be 59 bytes. */
     char ota_report_url[64];
@@ -45,7 +42,29 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     json_gen_str_t jstr;
     json_gen_str_start(&jstr, publish_payload, sizeof(publish_payload), NULL, NULL);
     json_gen_start_object(&jstr);
-    json_gen_obj_set_string(&jstr, "ota_job_id", ota_job_id);
+
+    if(ota_job_id){
+        json_gen_obj_set_string(&jstr, "ota_job_id", ota_job_id);
+    } else {
+        /* Reporting after applying and reboot, we need to fetch ota_job_id from NVS */
+        nvs_handle nvs;
+        if(nvs_open_from_partition(OTA_HTTPS_NVS_PART_NAME, OTA_HTTPS_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK){
+            char job_id[64] = {0};
+            size_t job_id_len = sizeof(job_id);
+            if(nvs_get_blob(
+                nvs, OTA_HTTPS_JOB_ID_NVS_NAME, &job_id, &job_id_len) == ESP_OK){
+                json_gen_obj_set_string(&jstr, "ota_job_id", job_id);
+                nvs_erase_key(nvs, OTA_HTTPS_JOB_ID_NVS_NAME);
+            } else {
+                ESP_LOGE(TAG, "Failed to report: ota_job_id not found in NVS");
+                return ESP_FAIL;
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to open NVS for reading ota_job_id");
+            return ESP_FAIL;
+        }
+    }
+
     json_gen_obj_set_string(&jstr, "status", esp_rmaker_ota_status_to_string(status));
     json_gen_obj_set_string(&jstr, "additional_info", additional_info);
     json_gen_end_object(&jstr);
@@ -114,6 +133,11 @@ static void esp_rmaker_ota_https_finish(esp_rmaker_ota_https_t *ota){
         free(ota->ota_job_id);
         ota->ota_job_id = NULL;
     }
+    
+    if(ota->metadata){
+        free(ota->metadata);
+        ota->metadata = NULL;
+    }
 
     if (ota->filesize){
         ota->filesize = 0;
@@ -151,24 +175,6 @@ static esp_err_t handle_fetched_data(char* json_payload)
         esp_rmaker_ota_https_t *ota = g_ota_https_data;
         ota->ota_in_progress = true;
 
-        /* Extract URL from payload */
-        ret = json_obj_get_strlen(&jctx, NODE_API_FIELD_URL, &len);
-        if (ret) {
-            ESP_LOGE(TAG, "Url not found in OTA update.");
-            err = ESP_ERR_INVALID_ARG;
-            goto end;
-        }
-        
-        buff = MEM_ALLOC_EXTRAM(len+1);
-        if(!buff){
-            ESP_LOGE(TAG, "Could not allocate %d bytes for OTA URL", len);
-            err = ESP_ERR_NO_MEM;
-            goto end;
-        }
-        json_obj_get_string(&jctx, NODE_API_FIELD_URL, buff, len+1);
-        ota->ota_url = buff;
-        buff = NULL;
-
         /* Extract JOB_ID from payload */
         ret = json_obj_get_strlen(&jctx, NODE_API_FIELD_JOB_ID, &len);
         if (ret) {
@@ -187,6 +193,51 @@ static esp_err_t handle_fetched_data(char* json_payload)
         ota->ota_job_id = buff;
         buff = NULL;
 
+        nvs_handle nvs;
+        if(nvs_open_from_partition(OTA_HTTPS_NVS_PART_NAME, OTA_HTTPS_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK){
+            nvs_set_blob(nvs, OTA_HTTPS_JOB_ID_NVS_NAME, ota->ota_job_id, len);
+            nvs_close(nvs);
+        }
+
+        /* Extract URL from payload */
+        ret = json_obj_get_strlen(&jctx, NODE_API_FIELD_URL, &len);
+        if (ret) {
+            ESP_LOGE(TAG, "Url not found in OTA update.");
+            esp_rmaker_ota_https_report(ota->ota_job_id, OTA_STATUS_REJECTED, "URL not present");
+            err = ESP_ERR_INVALID_ARG;
+            goto end;
+        }
+
+        buff = MEM_ALLOC_EXTRAM(len+1);
+        if(!buff){
+            ESP_LOGE(TAG, "Could not allocate %d bytes for OTA URL", len);
+            esp_rmaker_ota_https_report(ota->ota_job_id, OTA_STATUS_REJECTED, "Failed to allocate memory for URL");
+            err = ESP_ERR_NO_MEM;
+            goto end;
+        }
+        json_obj_get_string(&jctx, NODE_API_FIELD_URL, buff, len+1);
+        ota->ota_url = buff;
+        buff = NULL;
+
+        /* Try to extract metadata from payload 
+         * Metadata is sent in the response only if it is applicable for a job.
+         * Hence OTA will not be rejected if metadata key is not found in JSON.
+         */
+        ret = json_obj_get_object_strlen(&jctx, NODE_API_FIELD_METADATA, &len);
+        if (!ret) {
+            ESP_LOGI(TAG, "Metadata present for OTA Job ");
+            buff = MEM_ALLOC_EXTRAM(len+1);
+            if(!buff){
+                ESP_LOGE(TAG, "Could not allocate %d bytes for OTA metadata", len);
+                esp_rmaker_ota_https_report(ota->ota_job_id, OTA_STATUS_REJECTED, "Failed to allocate memory for metadata");
+                err = ESP_ERR_NO_MEM;
+                goto end;
+            }
+
+            json_obj_get_object_str(&jctx, NODE_API_FIELD_METADATA, buff, len+1);
+            ota->metadata = buff;
+            buff = NULL;
+        } 
         /* Extract Firmware Version from payload */
         ret = json_obj_get_strlen(&jctx, NODE_API_FIELD_FW_VERSION, &len);
         buff = MEM_ALLOC_EXTRAM(len+1);
@@ -211,7 +262,7 @@ static esp_err_t handle_fetched_data(char* json_payload)
         esp_rmaker_ota_data_t ota_data;
         ota_data.url = ota->ota_url;
         ota_data.fw_version = ota->fw_version;
-        ota_data.metadata = NULL;
+        ota_data.metadata = ota->metadata;
         ota_data.ota_job_id = ota->ota_job_id;
         ota_data.filesize = ota->filesize;
         ota_data.report_fn = esp_rmaker_ota_https_report;
@@ -417,7 +468,8 @@ static esp_err_t ota_check_wifi(esp_rmaker_ota_https_t *ota)
 static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
 {
     if (!ota){
-        return; // silently?
+        ESP_LOGE(TAG, "manage_rollback failed due to invalid argument");
+        return;
     }
 
     bool validation_pending = esp_rmaker_ota_is_ota_validation_pending();
@@ -442,7 +494,6 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
             }
             if (diag_status != OTA_DIAG_STATUS_FAIL) {
                 ESP_LOGI(TAG, "Diagnostics completed successfully! Continuing execution ...");
-                /* TODO: Describe OTA rollback Logic */
                 ota->ota_in_progress = true;
                 ota_check_wifi(ota);
             } else {
