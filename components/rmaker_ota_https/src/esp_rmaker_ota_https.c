@@ -32,7 +32,6 @@ static const esp_rmaker_ota_config_t ota_default_config = {
 
 esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, char *additional_info)
 {
-    status = OTA_STATUS_IN_PROGRESS;
     if (!ota_job_id){
         ESP_LOGE(TAG, "Failed to report: ota_job_id not present");
         return ESP_ERR_INVALID_ARG;
