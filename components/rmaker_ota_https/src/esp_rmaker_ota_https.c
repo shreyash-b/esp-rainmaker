@@ -2,8 +2,6 @@
 #include <json_parser.h>
 #include <json_generator.h>
 #include <nvs_flash.h>
-#include <lwip/netdb.h>
-#include <lwip/ip_addr.h>
 #include <esp_log.h>
 #include <esp_err.h>
 #include <esp_schedule.h>
@@ -15,7 +13,6 @@
 #include <esp_rmaker_factory.h>
 #include <esp_ota_ops.h>
 #include <esp_task.h>
-#include <ping/ping_sock.h>
 
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
@@ -32,6 +29,8 @@
     uint32_t ota_autofetch_period = OTA_AUTOFETCH_PERIOD * 3600 * 1000000;
 #endif
 
+#define VERIFICATION_RETRY_COUNT 3
+
 static const char *TAG = "esp_rmaker_ota_https";
 static esp_rmaker_ota_https_t *g_ota_https_data; 
 static EventGroupHandle_t event_group_apply_update;
@@ -40,6 +39,17 @@ static EventGroupHandle_t event_group_apply_update;
 static const esp_rmaker_ota_config_t ota_default_config = {
     .ota_cb = esp_rmaker_ota_default_cb
 };
+
+static esp_err_t ota_https_nvs_erase_job_id(void){
+    nvs_handle nvs;
+    if(nvs_open_from_partition(OTA_HTTPS_NVS_PART_NAME, OTA_HTTPS_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK){
+        if(nvs_erase_key(nvs, OTA_HTTPS_JOB_ID_NVS_NAME) != ESP_OK){
+            return ESP_OK;
+        }
+    }
+
+    return ESP_FAIL;
+}
 
 esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, char *additional_info)
 {
@@ -58,12 +68,11 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     } else {
         /* Reporting after applying and reboot, we need to fetch ota_job_id from NVS */
         nvs_handle nvs;
-        if(nvs_open_from_partition(OTA_HTTPS_NVS_PART_NAME, OTA_HTTPS_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK){
+        if(nvs_open_from_partition(OTA_HTTPS_NVS_PART_NAME, OTA_HTTPS_NVS_NAMESPACE, NVS_READONLY, &nvs) == ESP_OK){
             char job_id[64] = {0};
             size_t job_id_len = sizeof(job_id);
             if(nvs_get_blob(nvs, OTA_HTTPS_JOB_ID_NVS_NAME, &job_id, &job_id_len) == ESP_OK){
                 json_gen_obj_set_string(&jstr, "ota_job_id", job_id);
-                nvs_erase_key(nvs, OTA_HTTPS_JOB_ID_NVS_NAME);
             } else {
                 ESP_LOGE(TAG, "Failed to report: ota_job_id not found in NVS");
                 return ESP_FAIL;
@@ -173,8 +182,7 @@ static void _apply_ota_task(void *arg){
     ota_data.ota_job_id = ota->ota_job_id;
     ota_data.priv = ota->priv;
     ota_data.report_fn = esp_rmaker_ota_https_report;
-    // ota_data.url = ota->ota_url;
-    ota_data.url = "http://192.168.84.205:8000/ota_https.bin";
+    ota_data.url = ota->ota_url;
 
     if (ota->ota_cb(NULL, &ota_data) != ESP_OK){
         ESP_LOGE(TAG, "Failed to apply OTA");
@@ -466,7 +474,7 @@ esp_err_t esp_rmaker_ota_https_mark_valid(void)
     }
 
     ota->ota_valid = true;
-    
+
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t ota_state;
     if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
@@ -480,9 +488,7 @@ esp_err_t esp_rmaker_ota_https_mark_valid(void)
         ESP_LOGW(TAG, "Failed to stop rollback timemr.");
         /* Not returning failure since OTA is already marked as valid and rollback will eventually fail. */
     }
-    
 
-    esp_rmaker_ota_https_report(NULL, OTA_STATUS_SUCCESS, "OTA Upgrade finished and verified successfully");
     ota->ota_in_progress = false;
     return ESP_OK;
 }
@@ -497,20 +503,8 @@ static void esp_rmaker_ota_https_rollback(void *args)
     if(g_ota_https_data -> ota_valid){
         return;
     }
-    ESP_LOGI(TAG, "Could not verify WiFi. Rolling back");
+    ESP_LOGI(TAG, "Rolling back firmware.");
     esp_rmaker_ota_https_mark_invalid();
-}
-
-static void on_api_ping_success(esp_ping_handle_t hdl, void *args){
-    ESP_LOGI(TAG, "Firmware verified.");
-
-    /* Ping is successful. Don't need to check anything else */
-    
-    esp_ping_stop(hdl);
-    esp_ping_delete_session(hdl);
-
-    esp_rmaker_ota_https_mark_valid();
-
 }
 
 static esp_err_t verify_ota(esp_rmaker_ota_https_t *ota)
@@ -531,38 +525,18 @@ static esp_err_t verify_ota(esp_rmaker_ota_https_t *ota)
     ota->ota_valid = false;
     esp_timer_start_once(ota->rollback_timer, (CONFIG_OTA_HTTPS_ROLLBACK_PERIOD * 1000 * 1000));
 
-    /* Verify OTA by pinging RainMaker Node API host */
+    /* Verify OTA by trying to send OTA successful report */
 
-    /* Get IP address */
-    ip_addr_t target_addr;
-    struct addrinfo hint;
-    struct addrinfo *res = NULL;
-    memset(&hint, 0, sizeof(hint));
-    memset(&target_addr, 0, sizeof(target_addr));
-    getaddrinfo(NODE_API_HOST, NULL, &hint, &res);
-
-    struct in_addr addr4 = ((struct sockaddr_in *) (res->ai_addr))->sin_addr;
-    inet_addr_to_ip4addr(ip_2_ip4(&target_addr), &addr4);
-    freeaddrinfo(res);
-
-    esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
-    ping_config.target_addr = target_addr;
-    ping_config.task_stack_size = 5000;
-    ping_config.count = ESP_PING_COUNT_INFINITE;
-
-    /* Set callback functions */
-    esp_ping_callbacks_t cbs;
-    cbs.on_ping_success = on_api_ping_success;
-    cbs.cb_args = ota;
-
-    esp_ping_handle_t ping;
-
-    esp_ping_new_session(&ping_config, &cbs, &ping);
-    esp_ping_start(ping);
-    if(err != ESP_OK){
-        ESP_LOGE(TAG, "Failed to start ping");
-        return err;
+    for(int i=0; i<VERIFICATION_RETRY_COUNT; i++){
+        if (esp_rmaker_ota_https_report(NULL, OTA_STATUS_SUCCESS, "OTA Upgrade finished and verified successfully") == ESP_OK){
+            esp_rmaker_ota_https_mark_valid();
+            ota_https_nvs_erase_job_id();
+            ESP_LOGI(TAG, "OTA Firmware verification successful");
+            return ESP_OK;
+        }
     }
+
+    ESP_LOGE(TAG, "Could not verify firmmware. Rollback will be performed when rollback timer triggers");
 
     return ESP_OK;
 }
@@ -602,12 +576,15 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
                 ESP_LOGE(TAG, "Diagnostics failed! Start rollback to the previous version ...");
                 esp_rmaker_ota_https_mark_invalid();
             }
-        } 
+        } else {
+            if (validation_pending) {
+                esp_rmaker_ota_erase_rollback_flag();
+                esp_rmaker_ota_https_report(NULL, OTA_STATUS_REJECTED, "Firmware rolled back");
+                ota_https_nvs_erase_job_id();
+            }
+
+        }
     } 
-    if (validation_pending) {
-        esp_rmaker_ota_erase_rollback_flag();
-        esp_rmaker_ota_https_report(NULL, OTA_STATUS_REJECTED, "Firmware rolled back");
-    }
 }
 
 esp_err_t esp_rmaker_ota_https_enable(esp_rmaker_ota_config_t *ota_config)
