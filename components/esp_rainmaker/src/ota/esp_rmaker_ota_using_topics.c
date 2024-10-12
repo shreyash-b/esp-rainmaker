@@ -53,7 +53,7 @@ esp_err_t esp_rmaker_ota_report_status_using_topics(char *ota_job_id, ota_status
     json_gen_str_start(&jstr, publish_payload, sizeof(publish_payload), NULL, NULL);
     json_gen_start_object(&jstr);
     if (ota_job_id) {
-        json_gen_obj_set_string(&jstr, "ota_job_id", (char *)ota->transient_priv);
+        json_gen_obj_set_string(&jstr, "ota_job_id", ota_job_id);
     } else {
         /* This will get executed only when the OTA status is being reported after a reboot, either to
          * indicate successful verification of new firmware, or to indicate that firmware was rolled back
