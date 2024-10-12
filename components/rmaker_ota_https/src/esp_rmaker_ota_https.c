@@ -12,6 +12,11 @@
 #include <esp_rmaker_ota.h>
 #include <esp_ota_ops.h>
 #include <esp_rmaker_factory.h>
+#include <esp_task.h>
+
+#include <freertos/task.h>
+#include <freertos/event_groups.h>
+
 #include "esp_rmaker_client_data.h"
 #include "esp_rmaker_ota_https.h"
 #include "esp_rmaker_ota_http_internal.h"
@@ -26,6 +31,8 @@
 
 static const char *TAG = "esp_rmaker_ota_https";
 static esp_rmaker_ota_https_t *g_ota_https_data; 
+static EventGroupHandle_t event_group_apply_update;
+#define OTA_APPLIED_BIT BIT0
 
 static const esp_rmaker_ota_config_t ota_default_config = {
     .ota_cb = esp_rmaker_ota_default_cb
@@ -146,6 +153,53 @@ static void esp_rmaker_ota_https_finish(esp_rmaker_ota_https_t *ota){
     ota->ota_in_progress = false;
 }
 
+    
+static void _apply_ota_task(void *arg){
+    esp_rmaker_ota_https_t *ota = (esp_rmaker_ota_https_t *)arg;
+    
+    if(!ota->ota_cb){
+        ESP_LOGE(TAG, "OTA Callback not registered");
+        goto end;
+    }
+
+    esp_rmaker_ota_data_t ota_data;
+    ota_data.fw_version = ota->fw_version;
+    ota_data.filesize = ota->filesize;
+    ota_data.metadata = ota->metadata;
+    ota_data.ota_job_id = ota->ota_job_id;
+    ota_data.priv = ota->priv;
+    ota_data.report_fn = esp_rmaker_ota_https_report;
+    // ota_data.url = ota->ota_url;
+    ota_data.url = "http://192.168.84.205:8000/ota_https.bin";
+
+    if (ota->ota_cb(NULL, &ota_data) != ESP_OK){
+        ESP_LOGE(TAG, "Failed to apply OTA");
+    }
+
+end:
+    xEventGroupSetBits(event_group_apply_update, OTA_APPLIED_BIT);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t apply_ota(esp_rmaker_ota_https_t *ota)
+{
+    event_group_apply_update = xEventGroupCreate();
+    if (!event_group_apply_update){
+        ESP_LOGE(TAG, "Unable to create event group for applying OTA");
+        return ESP_ERR_NO_MEM;
+    }
+
+    if(xTaskCreate(_apply_ota_task, "apply_ota", CONFIG_OTA_HTTPS_APPLY_STACK_SIZE, ota, 5, NULL) != pdPASS){
+        ESP_LOGE(TAG, "Failed to create task for applying OTA");
+        vEventGroupDelete(event_group_apply_update);
+        return ESP_ERR_NO_MEM;
+    }
+
+    xEventGroupWaitBits(event_group_apply_update, OTA_APPLIED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+    vEventGroupDelete(event_group_apply_update);
+    return ESP_OK;
+}
+
 static esp_err_t handle_fetched_data(char* json_payload)
 {
     esp_err_t err = ESP_OK;
@@ -259,15 +313,7 @@ static esp_err_t handle_fetched_data(char* json_payload)
             goto end;
         }
 
-        esp_rmaker_ota_data_t ota_data;
-        ota_data.url = ota->ota_url;
-        ota_data.fw_version = ota->fw_version;
-        ota_data.metadata = ota->metadata;
-        ota_data.ota_job_id = ota->ota_job_id;
-        ota_data.filesize = ota->filesize;
-        ota_data.report_fn = esp_rmaker_ota_https_report;
-        
-        ota->ota_cb(ota->priv, &ota_data);
+        apply_ota(ota);
 
     } else {
         /* Error */

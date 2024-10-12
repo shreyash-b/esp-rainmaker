@@ -19,4 +19,8 @@ menu "ESP RainMaker HTTPS OTA Config"
         help
             The time period(in seconds) for checking if OTA is valid.
             If OTA is not marked valid in this timeframe, firmware is rolled back.
+
+    config OTA_HTTPS_APPLY_STACK_SIZE
+        int "Stack size(in kilobytes) of the task reponsible for calling the OTA callback"
+        default 10000
 endmenu
