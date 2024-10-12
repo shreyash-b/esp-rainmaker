@@ -2,6 +2,8 @@
 #include <json_parser.h>
 #include <json_generator.h>
 #include <nvs_flash.h>
+#include <lwip/netdb.h>
+#include <lwip/ip_addr.h>
 #include <esp_log.h>
 #include <esp_err.h>
 #include <esp_schedule.h>
@@ -10,9 +12,10 @@
 #include <esp_http_client.h>
 #include <esp_rmaker_utils.h>
 #include <esp_rmaker_ota.h>
-#include <esp_ota_ops.h>
 #include <esp_rmaker_factory.h>
+#include <esp_ota_ops.h>
 #include <esp_task.h>
+#include <ping/ping_sock.h>
 
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
@@ -58,8 +61,7 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
         if(nvs_open_from_partition(OTA_HTTPS_NVS_PART_NAME, OTA_HTTPS_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK){
             char job_id[64] = {0};
             size_t job_id_len = sizeof(job_id);
-            if(nvs_get_blob(
-                nvs, OTA_HTTPS_JOB_ID_NVS_NAME, &job_id, &job_id_len) == ESP_OK){
+            if(nvs_get_blob(nvs, OTA_HTTPS_JOB_ID_NVS_NAME, &job_id, &job_id_len) == ESP_OK){
                 json_gen_obj_set_string(&jstr, "ota_job_id", job_id);
                 nvs_erase_key(nvs, OTA_HTTPS_JOB_ID_NVS_NAME);
             } else {
@@ -76,6 +78,8 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     json_gen_obj_set_string(&jstr, "additional_info", additional_info);
     json_gen_end_object(&jstr);
     json_gen_str_end(&jstr);
+
+    ESP_LOGI(TAG, "Reporting: %s", publish_payload);
 
     const char *client_cert = esp_rmaker_get_client_cert();
     const char *client_key = esp_rmaker_get_client_key();
@@ -456,21 +460,30 @@ static void esp_rmaker_ota_https_register_timer(esp_rmaker_ota_https_t *ota)
 
 esp_err_t esp_rmaker_ota_https_mark_valid(void)
 {
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_ota_img_states_t ota_state;
-    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
-        if (ota_state != ESP_OTA_IMG_PENDING_VERIFY) {
-            ESP_LOGW(TAG, "OTA Already marked as valid");
-            return ESP_ERR_INVALID_STATE;
-        }
-    }
-
     esp_rmaker_ota_https_t *ota = g_ota_https_data;
     if (!ota){
         return ESP_ERR_INVALID_STATE;
     }
+
+    ota->ota_valid = true;
+    
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+        if (ota_state != ESP_OTA_IMG_PENDING_VERIFY) {
+            ESP_LOGW(TAG, "OTA Already marked as valid, state is %x ", ota_state);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
     esp_ota_mark_app_valid_cancel_rollback();
-    esp_timer_stop(ota->rollback_timer);
+    if(esp_timer_stop(ota->rollback_timer) != ESP_OK){
+        ESP_LOGW(TAG, "Failed to stop rollback timemr.");
+        /* Not returning failure since OTA is already marked as valid and rollback will eventually fail. */
+    }
+    
+
+    esp_rmaker_ota_https_report(NULL, OTA_STATUS_SUCCESS, "OTA Upgrade finished and verified successfully");
+    ota->ota_in_progress = false;
     return ESP_OK;
 }
 
@@ -479,20 +492,30 @@ esp_err_t esp_rmaker_ota_https_mark_invalid(void)
     return esp_rmaker_ota_mark_invalid();
 }
 
-static void event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
-{
-    ESP_LOGI(TAG, "Verified WiFi Connection");
-    esp_rmaker_ota_mark_valid();
-}
-
 static void esp_rmaker_ota_https_rollback(void *args) 
 {
-    ESP_LOGI(TAG, "Could not verify firmware. Rolling back");
-    esp_rmaker_ota_https_mark_valid();
+    if(g_ota_https_data -> ota_valid){
+        return;
+    }
+    ESP_LOGI(TAG, "Could not verify WiFi. Rolling back");
+    esp_rmaker_ota_https_mark_invalid();
 }
 
-static esp_err_t ota_check_wifi(esp_rmaker_ota_https_t *ota)
+static void on_api_ping_success(esp_ping_handle_t hdl, void *args){
+    ESP_LOGI(TAG, "Firmware verified.");
+
+    /* Ping is successful. Don't need to check anything else */
+    
+    esp_ping_stop(hdl);
+    esp_ping_delete_session(hdl);
+
+    esp_rmaker_ota_https_mark_valid();
+
+}
+
+static esp_err_t verify_ota(esp_rmaker_ota_https_t *ota)
 {
+    /* Create a timer for rollback */
     esp_timer_create_args_t timer_args = {
         .name = "OTA HTTPS Rollback Timer",
         .callback = esp_rmaker_ota_https_rollback,
@@ -505,8 +528,41 @@ static esp_err_t ota_check_wifi(esp_rmaker_ota_https_t *ota)
         return ESP_FAIL;
     }
 
+    ota->ota_valid = false;
     esp_timer_start_once(ota->rollback_timer, (CONFIG_OTA_HTTPS_ROLLBACK_PERIOD * 1000 * 1000));
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, (void *)ota);
+
+    /* Verify OTA by pinging RainMaker Node API host */
+
+    /* Get IP address */
+    ip_addr_t target_addr;
+    struct addrinfo hint;
+    struct addrinfo *res = NULL;
+    memset(&hint, 0, sizeof(hint));
+    memset(&target_addr, 0, sizeof(target_addr));
+    getaddrinfo(NODE_API_HOST, NULL, &hint, &res);
+
+    struct in_addr addr4 = ((struct sockaddr_in *) (res->ai_addr))->sin_addr;
+    inet_addr_to_ip4addr(ip_2_ip4(&target_addr), &addr4);
+    freeaddrinfo(res);
+
+    esp_ping_config_t ping_config = ESP_PING_DEFAULT_CONFIG();
+    ping_config.target_addr = target_addr;
+    ping_config.task_stack_size = 5000;
+    ping_config.count = ESP_PING_COUNT_INFINITE;
+
+    /* Set callback functions */
+    esp_ping_callbacks_t cbs;
+    cbs.on_ping_success = on_api_ping_success;
+    cbs.cb_args = ota;
+
+    esp_ping_handle_t ping;
+
+    esp_ping_new_session(&ping_config, &cbs, &ping);
+    esp_ping_start(ping);
+    if(err != ESP_OK){
+        ESP_LOGE(TAG, "Failed to start ping");
+        return err;
+    }
 
     return ESP_OK;
 }
@@ -541,7 +597,7 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
             if (diag_status != OTA_DIAG_STATUS_FAIL) {
                 ESP_LOGI(TAG, "Diagnostics completed successfully! Continuing execution ...");
                 ota->ota_in_progress = true;
-                ota_check_wifi(ota);
+                verify_ota(ota);
             } else {
                 ESP_LOGE(TAG, "Diagnostics failed! Start rollback to the previous version ...");
                 esp_rmaker_ota_https_mark_invalid();
@@ -550,7 +606,7 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
     } 
     if (validation_pending) {
         esp_rmaker_ota_erase_rollback_flag();
-        esp_rmaker_ota_report_status(NULL, OTA_STATUS_REJECTED, "Firmware rolled back");
+        esp_rmaker_ota_https_report(NULL, OTA_STATUS_REJECTED, "Firmware rolled back");
     }
 }
 
@@ -585,7 +641,7 @@ esp_err_t esp_rmaker_ota_https_enable(esp_rmaker_ota_config_t *ota_config)
 #ifdef CONFIG_OTA_HTTPS_AUTOFETCH_ENABLED
     esp_rmaker_ota_https_register_timer(ota);
 #endif
-    esp_rmaker_ota_https_manage_rollback(ota);
     g_ota_https_data = ota;
+    esp_rmaker_ota_https_manage_rollback(ota);
     return ESP_OK;
 }

@@ -8,6 +8,7 @@ typedef struct {
     esp_rmaker_post_ota_diag_t ota_diag;
     void *priv;
     bool ota_in_progress;
+    bool ota_valid;
     char *ota_url;
     char *fw_version;
     char *ota_job_id;

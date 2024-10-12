@@ -1,5 +1,7 @@
 #pragma once
 
+/* Pings to Node API are getting timed out. Replace espressif.com with Node API once the issue is resolved */
+#define NODE_API_HOST "espressif.com"
 #define NODE_API_ENDPOINT_BASE "https://api.node.rainmaker.espressif.com/v1"
 
 #define NODE_API_ENDPOINT_SUFFIX_FETCH "node/otafetch"
