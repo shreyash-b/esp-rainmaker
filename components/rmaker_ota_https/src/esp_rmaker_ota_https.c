@@ -289,29 +289,37 @@ static esp_err_t handle_fetched_data(char* json_payload)
          * Metadata is sent in the response only if it is applicable for a job.
          * Hence OTA will not be rejected if metadata key is not found in JSON.
          */
-        ret = json_obj_get_object_strlen(&jctx, NODE_API_FIELD_METADATA, &len);
-        if (!ret) {
-            ESP_LOGI(TAG, "Metadata present for OTA Job ");
-            buff = MEM_ALLOC_EXTRAM(len+1);
-            if(!buff){
-                ESP_LOGE(TAG, "Could not allocate %d bytes for OTA metadata", len);
-                esp_rmaker_ota_https_report(ota->ota_job_id, OTA_STATUS_REJECTED, "Failed to allocate memory for metadata");
-                err = ESP_ERR_NO_MEM;
-                goto end;
-            }
+        
+        /* Responding to time information requires rainmaker time server and a otafetch callback.
+         * Disabling metadata parsing until it is implemented.
+         */
 
-            json_obj_get_object_str(&jctx, NODE_API_FIELD_METADATA, buff, len+1);
-            ota->metadata = buff;
-            buff = NULL;
-        } 
-        /* Extract Firmware Version from payload */
-        ret = json_obj_get_strlen(&jctx, NODE_API_FIELD_FW_VERSION, &len);
-        buff = MEM_ALLOC_EXTRAM(len+1);
-        if(buff){
-            json_obj_get_string(&jctx, NODE_API_FIELD_FW_VERSION, buff, len+1);
-            ota->fw_version = buff;
-            buff = NULL;
-        }
+        #ifdef ESP_RMAKER_OTA_HTTPS_EXTRACT_METADATA
+            ret = json_obj_get_object_strlen(&jctx, NODE_API_FIELD_METADATA, &len);
+            if (!ret) {
+                ESP_LOGI(TAG, "Metadata present for OTA Job ");
+                buff = MEM_ALLOC_EXTRAM(len+1);
+                if(!buff){
+                    ESP_LOGE(TAG, "Could not allocate %d bytes for OTA metadata", len);
+                    esp_rmaker_ota_https_report(ota->ota_job_id, OTA_STATUS_REJECTED, "Failed to allocate memory for metadata");
+                    err = ESP_ERR_NO_MEM;
+                    goto end;
+                }
+
+                json_obj_get_object_str(&jctx, NODE_API_FIELD_METADATA, buff, len+1);
+                ota->metadata = buff;
+                buff = NULL;
+            } 
+            /* Extract Firmware Version from payload */
+            ret = json_obj_get_strlen(&jctx, NODE_API_FIELD_FW_VERSION, &len);
+            buff = MEM_ALLOC_EXTRAM(len+1);
+            if(buff){
+                json_obj_get_string(&jctx, NODE_API_FIELD_FW_VERSION, buff, len+1);
+                ota->fw_version = buff;
+                buff = NULL;
+            }
+        #endif
+        
 
         /* Extract File Size from payload */
         int filesize;
