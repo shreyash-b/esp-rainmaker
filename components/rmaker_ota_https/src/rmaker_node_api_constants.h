@@ -5,6 +5,9 @@
 #define NODE_API_ENDPOINT_SUFFIX_FETCH "node/otafetch"
 #define NODE_API_ENDPOINT_SUFFIX_REPORT "node/otastatus"
 
+/* API returns `105065` error code while the swagger documentation suggests it should return `10561`
+ * Update the error code here once that is fixed
+ */
 #define NODE_API_ERROR_CODE_NO_UPDATE_AVAILABLE 105065
 
 #define NODE_API_FIELD_ERROR_CODE "error_code"
