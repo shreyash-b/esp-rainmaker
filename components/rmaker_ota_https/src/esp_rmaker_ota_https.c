@@ -94,6 +94,12 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     const char *client_key = esp_rmaker_get_client_key();
 
     if (!client_cert || !client_key) {
+        if (client_cert) {
+            free(client_cert);
+        }
+        if (client_key) {
+            free(client_key);
+        }
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -108,6 +114,8 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     esp_http_client_handle_t client = esp_http_client_init(&http_config);
     if(!client){
         ESP_LOGE(TAG, "Failed to initialize HTTP client.");
+        free(client_cert);
+        free(clientkey);
         return ESP_FAIL;
     }
 
@@ -131,6 +139,8 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
 
 end:
     esp_http_client_cleanup(client);
+    free(client_cert);
+    free(client_key);
     return err;
 }
 
@@ -384,6 +394,12 @@ esp_err_t esp_rmaker_ota_https_fetch(void)
     const char *client_key = esp_rmaker_get_client_key();
 
     if (!client_cert || !client_key) {
+        if(client_cert){
+            free(client_cert);
+        }
+        if (client_key) {
+            free(client_key);
+        }
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -396,14 +412,15 @@ esp_err_t esp_rmaker_ota_https_fetch(void)
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&http_config);
+    esp_err_t err = ESP_OK;
     if(!client){
         ESP_LOGE(TAG, "Failed to initialize HTTP client.");
-        return ESP_FAIL;
+        err = ESP_FAIL;
+        goto ret
     }
 
     esp_http_client_set_header(client, "Content-Type", "application/json");
 
-    esp_err_t err = ESP_OK;
     if ((err = esp_http_client_open(client, 0)) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open HTTP Connection.");
         goto end;
@@ -434,13 +451,15 @@ esp_err_t esp_rmaker_ota_https_fetch(void)
             ESP_LOGE(TAG, "Failed to handle received OTA information: %s", esp_err_to_name(err));
             err = ESP_FAIL;
         }
-        goto ret; /* Client is already cleared */
+        goto ret; /* HTTP Client is already cleared */
     }
 
     free(buff);
 end:
     esp_http_client_cleanup(client);
 ret:
+    free(client_cert);
+    free(client_key);
     return err;
 }
 
