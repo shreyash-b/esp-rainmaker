@@ -95,10 +95,10 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
 
     if (!client_cert || !client_key) {
         if (client_cert) {
-            free(client_cert);
+            free((char *)client_cert);
         }
         if (client_key) {
-            free(client_key);
+            free((char *)client_key);
         }
         return ESP_ERR_INVALID_STATE;
     }
@@ -114,8 +114,8 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     esp_http_client_handle_t client = esp_http_client_init(&http_config);
     if(!client){
         ESP_LOGE(TAG, "Failed to initialize HTTP client.");
-        free(client_cert);
-        free(client_key);
+        free((char *)client_cert);
+        free((char *)client_key);
         return ESP_FAIL;
     }
 
@@ -139,8 +139,8 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
 
 end:
     esp_http_client_cleanup(client);
-    free(client_cert);
-    free(client_key);
+    free((char *)client_cert);
+    free((char *)client_key);
     return err;
 }
 
@@ -395,10 +395,10 @@ esp_err_t esp_rmaker_ota_https_fetch(void)
 
     if (!client_cert || !client_key) {
         if(client_cert){
-            free(client_cert);
+            free((char *)client_cert);
         }
         if (client_key) {
-            free(client_key);
+            free((char *)client_key);
         }
         return ESP_ERR_INVALID_STATE;
     }
@@ -458,8 +458,8 @@ esp_err_t esp_rmaker_ota_https_fetch(void)
 end:
     esp_http_client_cleanup(client);
 ret:
-    free(client_cert);
-    free(client_key);
+    free((char *)client_cert);
+    free((char *)client_key);
     return err;
 }
 
