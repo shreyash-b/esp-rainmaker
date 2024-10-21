@@ -115,7 +115,7 @@ esp_err_t esp_rmaker_ota_https_report(char *ota_job_id, ota_status_t status, cha
     if(!client){
         ESP_LOGE(TAG, "Failed to initialize HTTP client.");
         free(client_cert);
-        free(clientkey);
+        free(client_key);
         return ESP_FAIL;
     }
 
@@ -416,7 +416,7 @@ esp_err_t esp_rmaker_ota_https_fetch(void)
     if(!client){
         ESP_LOGE(TAG, "Failed to initialize HTTP client.");
         err = ESP_FAIL;
-        goto ret
+        goto ret;
     }
 
     esp_http_client_set_header(client, "Content-Type", "application/json");
