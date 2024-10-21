@@ -24,9 +24,8 @@
 
 #ifdef CONFIG_OTA_HTTPS_AUTOFETCH_ENABLED
     #include <esp_timer.h>
-    #define OTA_AUTOFETCH_PERIOD CONFIG_OTA_HTTPS_AUTOFETCH_PERIOD
     /* Convert hours to microseconds */
-    uint32_t ota_autofetch_period = OTA_AUTOFETCH_PERIOD * 3600 * 1000000;
+    #define OTA_AUTOFETCH_PERIOD CONFIG_OTA_HTTPS_AUTOFETCH_PERIOD * 3600 * 1000000
 #endif
 
 #define VERIFICATION_RETRY_COUNT 3
@@ -486,7 +485,10 @@ static void esp_rmaker_ota_https_register_timer(esp_rmaker_ota_https_t *ota)
     };
     
     if(esp_timer_create(&timer_config, &ota->autofetch_timer) == ESP_OK){
-        esp_timer_start_periodic(ota->autofetch_timer, ota_autofetch_period);
+        /* Timer period conversion for silencing overflow warning.
+         * Theoretically overflow occures if 5124095574 hours provided.
+         */
+        esp_timer_start_periodic(ota->autofetch_timer, (uint64_t) OTA_AUTOFETCH_PERIOD);
     } else {
         ESP_LOGE(TAG, "Failed to create autofetch timer.");
     }
