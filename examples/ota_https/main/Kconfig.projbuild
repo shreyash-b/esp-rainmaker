@@ -1,11 +1,11 @@
 menu "Example Configuration"
 
-    config EXAMPLE_BOARD_BUTTON_GPIO
-        int "Boot Button GPIO"
-        default 9 if IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32C6 || IDF_TARGET_ESP32C2
-        default 0
-        help
-            GPIO number on which the "Boot" button is connected. This is generally used
-            by the application for resetting the provisioned network credentials.
+    config EXAMPLE_WIFI_SSID
+        string "WiFi SSID for connection"
+        default "EXAMPLE_SSID"
+
+    config EXAMPLE_WIFI_PASSWORD
+        string "WiFi Password for connection"
+        default "EXAMPLE_PASSWORD"
 
 endmenu
