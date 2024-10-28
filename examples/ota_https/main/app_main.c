@@ -1,0 +1,54 @@
+/* OTA HTTPS Example
+
+   This example code is in the Public Domain (or CC0 licensed, at your option.)
+
+   Unless required by applicable law or agreed to in writing, this
+   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+   CONDITIONS OF ANY KIND, either express or implied.
+*/
+
+#include <nvs_flash.h>
+#include <app_network.h>
+#include <esp_log.h>
+#include <esp_rmaker_factory.h>
+#include <esp_rmaker_ota_https.h>
+#include <app_reset.h>
+
+static const char *TAG = "app_mmain";
+
+#define BUTTON_GPIO          CONFIG_EXAMPLE_BOARD_BUTTON_GPIO
+#define BUTTON_ACTIVE_LEVEL  0
+
+#define WIFI_RESET_BUTTON_TIMEOUT       3
+
+void app_main()
+{
+    esp_err_t err = esp_event_loop_create_default();
+    ESP_ERROR_CHECK(err);
+
+    err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( err );
+
+    /* esp_rmaker_init() does the initialization of factory partition .
+     * However, since we're not calling esp_rmaker_init(), we need to explicitly initialize factory partition.
+     */
+    err = esp_rmaker_factory_init();
+    if (err != ESP_OK){
+        ESP_LOGE(TAG, "Failed to initialize rmaker factory partition.");
+    }
+    ESP_ERROR_CHECK(err);
+    
+    button_handle_t btn_handle = iot_button_create(BUTTON_GPIO, BUTTON_ACTIVE_LEVEL);
+    if (btn_handle) {
+        /* Register Wi-Fi reset functionality */
+        app_reset_button_register(btn_handle, WIFI_RESET_BUTTON_TIMEOUT, 0);
+    }
+
+    app_network_init();
+    app_network_start(POP_TYPE_RANDOM);
+
+}
