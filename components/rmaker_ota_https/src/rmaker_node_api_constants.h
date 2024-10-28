@@ -1,6 +1,7 @@
 #pragma once
 
-#define NODE_API_ENDPOINT_BASE "https://api.node.rainmaker.espressif.com/v1"
+// #define NODE_API_ENDPOINT_BASE "https://api.node.rainmaker.espressif.com/v1"
+#define NODE_API_ENDPOINT_BASE "http://192.168.75.107:5000/v1"
 
 #define NODE_API_ENDPOINT_SUFFIX_FETCH "node/otafetch"
 #define NODE_API_ENDPOINT_SUFFIX_REPORT "node/otastatus"
