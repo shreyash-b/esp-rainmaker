@@ -560,8 +560,15 @@ static esp_err_t ota_check_wifi(esp_rmaker_ota_https_t *ota)
 
     while(true) {
         if (esp_rmaker_ota_https_report(NULL, OTA_STATUS_SUCCESS, "OTA Upgrade finished and verified successfully") == ESP_OK){
-            esp_rmaker_ota_https_mark_valid();
-            ota_https_nvs_erase_job_id();
+            ESP_LOGI(TAG, "Sucessfully reported success for OTA image.");
+            if(esp_rmaker_ota_https_mark_valid() != ESP_OK){
+                ESP_LOGE(TAG, "Failed to mark OTA as valid after reporting success.");
+                return ESP_FAIL;
+            }
+
+            if (ota_https_nvs_erase_job_id() != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to erase OTA ID from NVS.");
+            }
             ESP_LOGI(TAG, "OTA Firmware verification successful");
             return ESP_OK;
         }
@@ -604,6 +611,7 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
                 ESP_LOGI(TAG, "Diagnostics completed successfully! Continuing execution ...");
                 ota->ota_in_progress = true;
                 ota_check_wifi(ota);
+                ota->ota_in_progress = false;
             } else {
                 ESP_LOGE(TAG, "Diagnostics failed! Start rollback to the previous version ...");
                 esp_rmaker_ota_https_mark_invalid();
@@ -611,7 +619,9 @@ static void esp_rmaker_ota_https_manage_rollback(esp_rmaker_ota_https_t *ota)
         } else {
             if (validation_pending) {
                 esp_rmaker_ota_erase_rollback_flag();
-                esp_rmaker_ota_https_report(NULL, OTA_STATUS_REJECTED, "Firmware rolled back");
+                if(esp_rmaker_ota_https_report(NULL, OTA_STATUS_REJECTED, "Firmware rolled back") != ESP_OK){
+                    ESP_LOGW(TAG, "Failed to report firmware rolled back.");
+                }
                 ota_https_nvs_erase_job_id();
             }
 
@@ -650,7 +660,7 @@ esp_err_t esp_rmaker_ota_https_enable(esp_rmaker_ota_config_t *ota_config)
 #ifdef CONFIG_OTA_HTTPS_AUTOFETCH_ENABLED
     esp_rmaker_ota_https_register_timer(ota);
 #endif
-    esp_rmaker_ota_https_manage_rollback(ota);
     g_ota_https_data = ota;
+    esp_rmaker_ota_https_manage_rollback(ota);
     return ESP_OK;
 }
