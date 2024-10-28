@@ -22,5 +22,5 @@ menu "ESP RainMaker HTTPS OTA Config"
 
     config OTA_HTTPS_APPLY_STACK_SIZE
         int "Stack size(in kilobytes) of the task reponsible for calling the OTA callback"
-        default 10000
+        default 3072
 endmenu
